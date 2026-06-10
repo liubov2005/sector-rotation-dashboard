@@ -4,8 +4,8 @@ import plotly.express as px
 import os
 
 st.set_page_config(page_title="Model Comparison Dashboard", layout="wide")
-st.title("📊 AI Sector Rotation – Model Comparison (2020‑2026)")
-st.markdown("Compare XGBoost, LightGBM, Neural Network, CatBoost, and Baseline – all on the same period.")
+st.title("📊 AI Sector Rotation – Model Comparison (2006‑2025)")
+st.markdown("Compare XGBoost, LightGBM, Neural Network, CatBoost, and Baseline – all on the same period (trading starts 2006, data 2000‑2025).")
 
 @st.cache_data
 def load_data():
