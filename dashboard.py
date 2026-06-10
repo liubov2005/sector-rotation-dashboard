@@ -157,22 +157,28 @@ else:
     else:
         st.warning("No drawdown or equity data for this model/window.")
 
-# Monthly returns bar chart
+# Monthly returns bar chart (with colors)
 st.subheader(f"📆 Monthly Returns – {selected_model} {selected_window}")
 if eq_df is not None and selected_window in eq_df.columns:
     eq_vals = eq_df[selected_window].dropna()
     monthly_ret = eq_vals.pct_change().dropna() * 100
     if not monthly_ret.empty:
-        fig_ret = px.bar(x=monthly_ret.index, y=monthly_ret.values,
-                         labels={"x": "Date", "y": "Return (%)"},
+        # Create a DataFrame with return and color condition
+        ret_df = pd.DataFrame({
+            "Date": monthly_ret.index,
+            "Return (%)": monthly_ret.values,
+            "Color": ["green" if v >= 0 else "red" for v in monthly_ret.values]
+        })
+        fig_ret = px.bar(ret_df, x="Date", y="Return (%)", color="Color",
+                         color_discrete_map={"green": "green", "red": "red"},
                          title=f"{selected_model} {selected_window} – Monthly Returns")
-        fig_ret.add_hline(y=0, line_dash="dash", line_color="red")
+        fig_ret.add_hline(y=0, line_dash="dash", line_color="black")
+        fig_ret.update_layout(showlegend=False)  # hide color legend
         st.plotly_chart(fig_ret, use_container_width=True)
     else:
         st.info("Not enough data to compute monthly returns.")
 else:
     st.info("Equity data missing – cannot compute monthly returns.")
-
 # ============================================================
 # Comparison graph across models (same training window)
 # INCLUDES BASELINE AS A FIXED REFERENCE
