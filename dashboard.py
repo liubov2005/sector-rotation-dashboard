@@ -164,20 +164,39 @@ if eq_df is not None and selected_window in eq_df.columns:
 else:
     st.info("Equity data missing – cannot compute monthly returns.")
 
+# ============================================================
 # Comparison graph across models (same training window)
-st.subheader("📊 Model Comparison per Training Window")
+# INCLUDES BASELINE AS A FIXED REFERENCE
+# ============================================================
+st.subheader("📊 Model Comparison per Training Window (with Baseline)")
 window_for_compare = st.selectbox("Select training window to compare:", 
                                    ["12M", "24M", "36M", "60M"], 
                                    key="comp_window")
 
 fig_comp = px.line(title=f"Equity Curves – {window_for_compare} Training Window")
 any_data = False
+
+# Add standard models for the selected window
 for model_name, eq_df in equity_data.items():
+    if model_name == "Baseline":
+        continue  # handle baseline separately below
     if eq_df is not None and window_for_compare in eq_df.columns:
         eq_series = eq_df[window_for_compare].dropna()
         fig_comp.add_scatter(x=eq_series.index, y=eq_series.values,
                              mode='lines', name=model_name)
         any_data = True
+
+# Add Baseline (fixed strategy, independent of training window)
+baseline_eq = equity_data.get("Baseline")
+if baseline_eq is not None and not baseline_eq.empty:
+    # Baseline has a single column (e.g., "RuleBased")
+    baseline_col = baseline_eq.columns[0]
+    eq_base = baseline_eq[baseline_col].dropna()
+    fig_comp.add_scatter(x=eq_base.index, y=eq_base.values,
+                         mode='lines', name="Baseline",
+                         line=dict(dash="dash", color="purple"))
+    any_data = True
+
 if not any_data:
     st.info("No equity data available for the selected window.")
 else:
