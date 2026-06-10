@@ -5,7 +5,7 @@ import os
 
 st.set_page_config(page_title="Model Comparison Dashboard", layout="wide")
 st.title("📊 AI Sector Rotation – Model Comparison (2020‑2026)")
-st.markdown("Compare XGBoost, LightGBM, Neural Network, and CatBoost – all on the same period.")
+st.markdown("Compare XGBoost, LightGBM, Neural Network, CatBoost, and Baseline – all on the same period.")
 
 @st.cache_data
 def load_data():
@@ -14,14 +14,20 @@ def load_data():
     lgb = pd.read_csv("LightGBM_Summary.csv")
     nn = pd.read_csv("NeuralNetwork_Summary.csv")
     cat = pd.read_csv("CatBoost_Performance_Summary.csv")
+    
+    # ---- NEW: Load Baseline summary ----
+    base = pd.read_csv("Baseline_Summary.csv")
+    # ------------------------------------
 
     # Add model column
     xgb["Model"] = "XGBoost"
     lgb["Model"] = "LightGBM"
     nn["Model"] = "NeuralNetwork"
     cat["Model"] = "CatBoost"
+    base["Model"] = "Baseline"          # NEW
 
-    all_models = pd.concat([xgb, lgb, nn, cat], ignore_index=True)
+    # Combine all
+    all_models = pd.concat([xgb, lgb, nn, cat, base], ignore_index=True)  # added base
 
     # Keep only the columns we want to display
     keep_cols = ['Window', 'End Fund', 'CAGR', 'Volatility', 'Sharpe', 'Max DD', 'Win Rate', 'Model']
@@ -34,7 +40,8 @@ def load_data():
     for name, file in [("XGBoost", "XGBoost_Equity.csv"),
                        ("LightGBM", "LightGBM_Equity.csv"),
                        ("NeuralNetwork", "NeuralNetwork_Equity.csv"),
-                       ("CatBoost", "CatBoost_Portfolio_Value.csv")]:
+                       ("CatBoost", "CatBoost_Portfolio_Value.csv"),
+                       ("Baseline", "Baseline_Equity.csv")]:   # NEW: add Baseline equity file
         if os.path.exists(file):
             df = pd.read_csv(file, index_col=0, parse_dates=True)
             # Clean column names: strip spaces, add 'M' to numeric columns
@@ -52,7 +59,7 @@ def load_data():
         else:
             equity[name] = None
 
-    # Drawdowns (optional)
+    # Drawdowns (optional) – no change for Baseline (no drawdown CSV needed)
     drawdown = {}
     for name, file in [("XGBoost", "XGBoost_Drawdowns.csv"),
                        ("LightGBM", "LightGBM_Drawdowns.csv"),
@@ -140,4 +147,4 @@ else:
 st.subheader("📋 All Models – Performance Table")
 st.dataframe(df_models, use_container_width=True)
 
-st.caption("Data from XGBoost, LightGBM, NeuralNetwork, CatBoost (2020‑2026).")
+st.caption("Data from XGBoost, LightGBM, NeuralNetwork, CatBoost, and Baseline (2020‑2026).")
