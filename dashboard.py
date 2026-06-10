@@ -14,20 +14,16 @@ def load_data():
     lgb = pd.read_csv("LightGBM_Summary.csv")
     nn = pd.read_csv("NeuralNetwork_Summary.csv")
     cat = pd.read_csv("CatBoost_Performance_Summary.csv")
-    
-    # ---- NEW: Load Baseline summary ----
     base = pd.read_csv("Baseline_Summary.csv")
-    # ------------------------------------
 
     # Add model column
     xgb["Model"] = "XGBoost"
     lgb["Model"] = "LightGBM"
     nn["Model"] = "NeuralNetwork"
     cat["Model"] = "CatBoost"
-    base["Model"] = "Baseline"          # NEW
+    base["Model"] = "Baseline"
 
-    # Combine all
-    all_models = pd.concat([xgb, lgb, nn, cat, base], ignore_index=True)  # added base
+    all_models = pd.concat([xgb, lgb, nn, cat, base], ignore_index=True)
 
     # Keep only the columns we want to display
     keep_cols = ['Window', 'End Fund', 'CAGR', 'Volatility', 'Sharpe', 'Max DD', 'Win Rate', 'Model']
@@ -37,14 +33,13 @@ def load_data():
 
     # Equity curves
     equity = {}
+    # Standard models
     for name, file in [("XGBoost", "XGBoost_Equity.csv"),
                        ("LightGBM", "LightGBM_Equity.csv"),
                        ("NeuralNetwork", "NeuralNetwork_Equity.csv"),
-                       ("CatBoost", "CatBoost_Portfolio_Value.csv"),
-                       ("Baseline", "Baseline_Equity.csv")]:   # NEW: add Baseline equity file
+                       ("CatBoost", "CatBoost_Portfolio_Value.csv")]:
         if os.path.exists(file):
             df = pd.read_csv(file, index_col=0, parse_dates=True)
-            # Clean column names: strip spaces, add 'M' to numeric columns
             df.columns = df.columns.str.strip()
             new_cols = []
             for col in df.columns:
@@ -59,7 +54,17 @@ def load_data():
         else:
             equity[name] = None
 
-    # Drawdowns (optional) – no change for Baseline (no drawdown CSV needed)
+    # Baseline equity (special handling)
+    if os.path.exists("Baseline_Equity.csv"):
+        df_base = pd.read_csv("Baseline_Equity.csv", index_col=0, parse_dates=True)
+        # Baseline CSV has column "Baseline". We rename it to the window name from summary
+        window_name = base["Window"].iloc[0]  # should be "RuleBased"
+        df_base.columns = [window_name]       # rename to match window
+        equity["Baseline"] = df_base
+    else:
+        equity["Baseline"] = None
+
+    # Drawdowns (optional – Baseline has none, but we compute from equity)
     drawdown = {}
     for name, file in [("XGBoost", "XGBoost_Drawdowns.csv"),
                        ("LightGBM", "LightGBM_Drawdowns.csv"),
