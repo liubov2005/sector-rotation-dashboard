@@ -16,6 +16,15 @@ def load_data():
     cat = pd.read_csv("CatBoost_Performance_Summary.csv")
     base = pd.read_csv("Baseline_Summary.csv")
 
+    # --- Fix CatBoost missing 'Window' column ---
+    if 'Window' not in cat.columns:
+        # Assume rows are in order: 12M, 24M, 36M, 60M
+        cat.insert(0, 'Window', ['12M', '24M', '36M', '60M'])
+    
+    # --- Fix CatBoost missing 'Win Rate' (use 'WinRate' if present) ---
+    if 'Win Rate' not in cat.columns and 'WinRate' in cat.columns:
+        cat['Win Rate'] = cat['WinRate']
+
     # Add model column
     xgb["Model"] = "XGBoost"
     lgb["Model"] = "LightGBM"
@@ -208,4 +217,4 @@ else:
 st.subheader("📋 All Models – Performance Table")
 st.dataframe(df_models, use_container_width=True)
 
-st.caption("Data from XGBoost, LightGBM, NeuralNetwork, CatBoost, and Baseline (2020‑2026).")
+st.caption("Data from XGBoost, LightGBM, NeuralNetwork, CatBoost, and Baseline (2006‑2025).")
