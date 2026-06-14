@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
 import os
 
 st.set_page_config(page_title="Sector Rotation Dashboard", layout="wide")
@@ -11,16 +10,31 @@ page = st.sidebar.radio("Go to", [
     "🔮 Prediction Demo", "🧠 Explainability", "💼 Business Recommendation"
 ])
 
-# Safe CSV reader
-def safe_read_csv(filename):
-    if os.path.exists(filename):
-        return pd.read_csv(filename)
+# ---------------------------
+# Helper: try original name, then name with " (l)" before extension
+# ---------------------------
+def find_file(base_name):
+    # First try exact name
+    if os.path.exists(base_name):
+        return base_name
+    # Try inserting " (l)" before .csv
+    if base_name.endswith('.csv'):
+        alt_name = base_name[:-4] + " (l).csv"
+        if os.path.exists(alt_name):
+            return alt_name
+    return None
+
+def safe_read_csv(base_name):
+    f = find_file(base_name)
+    if f is not None:
+        return pd.read_csv(f)
     else:
-        st.warning(f"File not found: {filename}")
+        st.warning(f"Missing file: {base_name} (or {base_name[:-4] + ' (l).csv'})")
         return None
 
 @st.cache_data
 def load_all_data():
+    # Summary files
     xgb = safe_read_csv("XGBoost_Summary.csv")
     lgb = safe_read_csv("LightGBM_Summary.csv")
     nn = safe_read_csv("NeuralNetwork_Summary.csv")
@@ -40,7 +54,8 @@ def load_all_data():
     if cat is not None:
         cat["Model"] = "CatBoost"
         if 'Window' not in cat.columns:
-            cat.insert(0, 'Window', ['12M', '24M', '36M', '60M'])
+            # Try to infer from row count
+            cat.insert(0, 'Window', ['12M','24M','36M','60M'][:len(cat)])
         if 'Win Rate' not in cat.columns and 'WinRate' in cat.columns:
             cat['Win Rate'] = cat['WinRate']
         model_dfs.append(cat)
@@ -49,30 +64,43 @@ def load_all_data():
         model_dfs.append(base)
 
     if not model_dfs:
+        st.error("No model summary files found.")
         return pd.DataFrame(), {}, {}
 
     all_models = pd.concat(model_dfs, ignore_index=True)
     keep_cols = ['Window', 'End Fund', 'CAGR', 'Volatility', 'Sharpe', 'Max DD', 'Win Rate', 'Model']
     all_models = all_models[[c for c in keep_cols if c in all_models.columns]]
 
+    # Equity curves
     equity = {}
-    for name, file in [("XGBoost", "XGBoost_Equity.csv"), ("LightGBM", "LightGBM_Equity.csv"),
-                       ("NeuralNetwork", "NeuralNetwork_Equity.csv"), ("CatBoost", "CatBoost_Portfolio_Value.csv")]:
-        if os.path.exists(file):
-            df = pd.read_csv(file, index_col=0, parse_dates=True)
+    # Map display name to base filename
+    eq_files = [
+        ("XGBoost", "XGBoost_Equity.csv"),
+        ("LightGBM", "LightGBM_Equity.csv"),
+        ("NeuralNetwork", "NeuralNetwork_Equity.csv"),
+        ("CatBoost", "CatBoost_Portfolio_Value.csv")
+    ]
+    for name, base_file in eq_files:
+        f = find_file(base_file)
+        if f:
+            df = pd.read_csv(f, index_col=0, parse_dates=True)
             df.columns = df.columns.str.strip()
+            # Convert numeric column names (12,24,36,60) to "12M", etc.
             new_cols = [col + 'M' if col.isdigit() else col for col in df.columns]
             df.columns = new_cols
             equity[name] = df
         else:
             equity[name] = None
-    if os.path.exists("Baseline_Equity.csv"):
-        base_eq = pd.read_csv("Baseline_Equity.csv", index_col=0, parse_dates=True)
+
+    # Baseline equity
+    base_eq_file = find_file("Baseline_Equity.csv")
+    if base_eq_file:
+        base_eq = pd.read_csv(base_eq_file, index_col=0, parse_dates=True)
         equity["Baseline"] = base_eq
     else:
         equity["Baseline"] = None
 
-    return all_models, equity, {}
+    return all_models, equity, {}   # drawdowns not needed (computed from equity)
 
 # ---------------------------
 # Home
@@ -82,7 +110,7 @@ if page == "🏠 Home":
     st.markdown("""
     **Problem:** Dynamic sector allocation to outperform the market.
     **Solution:** ML models predict monthly sector returns using 19 features.
-    **Business Impact (from full backtest):**
+    **Business Impact (full backtest 2006‑2025):**
     - XGBoost 12M: $1M → $250M, CAGR 32.5%, Sharpe 1.32, Max DD -31%.
     """)
 
@@ -91,53 +119,62 @@ if page == "🏠 Home":
 # ---------------------------
 elif page == "📊 Data Explorer":
     st.title("Data Explorer")
-    df_models, _, _ = load_all_data()
-    if df_models.empty:
-        st.warning("No data. Please upload CSV files.")
+    df, _, _ = load_all_data()
+    if df.empty:
+        st.warning("No data. Upload CSV files to GitHub.")
     else:
-        st.dataframe(df_models, use_container_width=True)
-        st.write(f"Models: {df_models['Model'].unique().tolist()}")
-        st.write(f"Windows: {sorted(df_models['Window'].unique())}")
+        st.dataframe(df, use_container_width=True)
+        st.write(f"Models: {df['Model'].unique().tolist()}")
+        st.write(f"Windows: {sorted(df['Window'].unique())}")
 
 # ---------------------------
 # Model Performance
 # ---------------------------
 elif page == "📈 Model Performance":
     st.title("Model Performance")
-    df_models, equity_data, _ = load_all_data()
-    if df_models.empty:
+    df, equity, _ = load_all_data()
+    if df.empty:
         st.stop()
     col1, col2 = st.columns(2)
     with col1:
-        selected_model = st.selectbox("Model", df_models["Model"].unique())
-    model_subset = df_models[df_models["Model"] == selected_model]
+        model = st.selectbox("Model", df["Model"].unique())
+    sub = df[df["Model"] == model]
     with col2:
-        selected_window = st.selectbox("Window", model_subset["Window"].tolist())
-    row = model_subset[model_subset["Window"] == selected_window].iloc[0]
-    st.metric("CAGR", row["CAGR"])
-    st.metric("Sharpe", row["Sharpe"])
-    st.metric("Max Drawdown", row["Max DD"])
+        window = st.selectbox("Window", sub["Window"].tolist())
+    row = sub[sub["Window"] == window].iloc[0]
+
+    # Metrics
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("CAGR", row["CAGR"])
+    c2.metric("Sharpe", row["Sharpe"])
+    c3.metric("Volatility", row["Volatility"])
+    c4.metric("Max Drawdown", row["Max DD"])
 
     # Equity curve
-    eq_df = equity_data.get(selected_model)
-    if eq_df is not None and selected_window in eq_df.columns:
-        fig = px.line(x=eq_df.index, y=eq_df[selected_window].dropna(),
+    eq = equity.get(model)
+    if eq is not None and window in eq.columns:
+        fig = px.line(x=eq.index, y=eq[window].dropna(),
                       labels={"x": "Date", "y": "Portfolio Value"})
         fig.update_yaxes(type="log")
         st.plotly_chart(fig)
+    else:
+        st.info("Equity curve not available for this model/window.")
 
 # ---------------------------
 # Prediction Demo
 # ---------------------------
 elif page == "🔮 Prediction Demo":
     st.title("Prediction Demo")
-    df_models, _, _ = load_all_data()
-    if df_models.empty:
-        st.warning("No data")
-    else:
-        best = df_models.loc[df_models['Sharpe'].astype(float).idxmax()]
+    df, _, _ = load_all_data()
+    if not df.empty:
+        # Convert Sharpe to numeric for best selection
+        df_sharpe = df.copy()
+        df_sharpe['Sharpe_num'] = df_sharpe['Sharpe'].astype(float)
+        best = df_sharpe.loc[df_sharpe['Sharpe_num'].idxmax()]
         st.success(f"Recommended model: **{best['Model']} {best['Window']}** (Sharpe {best['Sharpe']})")
         st.markdown(f"**Predicted top sectors for next month:** Semiconductor, Electronics, Shipping")
+    else:
+        st.warning("No model data.")
 
 # ---------------------------
 # Explainability
@@ -145,14 +182,13 @@ elif page == "🔮 Prediction Demo":
 elif page == "🧠 Explainability":
     st.title("Explainability")
     st.markdown("""
-    ### Feature Importance (from LightGBM)
+    ### Feature Importance (from LightGBM 12M)
     - Volatility (27.5%) – most predictive
     - Relative Strength (23.9%)
     - Momentum (22.6%)
     - Breadth (15.3%)
     - MA Distance (10.7%)
     """)
-    # Create a simple bar chart using the percentages
     imp_df = pd.DataFrame({
         "Feature": ["Volatility", "Rel. Strength", "Momentum", "Breadth", "MA Dist"],
         "Importance": [27.5, 23.9, 22.6, 15.3, 10.7]
@@ -165,13 +201,15 @@ elif page == "🧠 Explainability":
 # ---------------------------
 elif page == "💼 Business Recommendation":
     st.title("Business Recommendation")
-    df_models, _, _ = load_all_data()
-    if not df_models.empty:
-        best = df_models.loc[df_models['Sharpe'].astype(float).idxmax()]
-        st.success(f"Deploy {best['Model']} with {best['Window']} window")
+    df, _, _ = load_all_data()
+    if not df.empty:
+        df_sharpe = df.copy()
+        df_sharpe['Sharpe_num'] = df_sharpe['Sharpe'].astype(float)
+        best = df_sharpe.loc[df_sharpe['Sharpe_num'].idxmax()]
+        st.success(f"Deploy **{best['Model']}** with **{best['Window']}** window")
     st.markdown("""
-    1. Rebalance monthly, top 3 sectors.
-    2. Use Amplified Softmax (temp=3).
+    1. Rebalance monthly to top 3 sectors.
+    2. Use Amplified Softmax weighting (temperature = 3.0).
     3. Monitor volatility; reduce exposure when high.
-    4. Implement 25% stop-loss.
+    4. Implement 25% stop‑loss.
     """)
