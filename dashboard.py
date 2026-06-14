@@ -150,7 +150,7 @@ if page == "🏠 Home":
     **Solution:** We built machine learning models (XGBoost, LightGBM, CatBoost, Neural Network) that predict next‑month sector returns using 19 features (momentum, MA distance, relative strength, volatility, breadth). The top 3 sectors are selected monthly using Amplified Softmax weighting.
 
     **Business Impact (SMART):**
-    - XGBoost 12M turned $1M into **$250M** over 20 years (2006‑2025).
+    - XGBoost 12M turned $1M into $250M over 20 years (2006‑2025).
     - **CAGR 32.5%** vs baseline 18.6%.
     - **Sharpe ratio 1.32** vs baseline 0.70.
     - **Max drawdown -31%** – half the baseline’s -64%.
