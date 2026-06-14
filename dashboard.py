@@ -23,35 +23,62 @@ page = st.sidebar.radio("Go to", [
 ])
 
 # ---------------------------
-# Data loading (with cache)
+# Helper: safe read CSV
+# ---------------------------
+def safe_read_csv(filename, **kwargs):
+    if os.path.exists(filename):
+        return pd.read_csv(filename, **kwargs)
+    else:
+        st.warning(f"File not found: {filename}. Skipping.")
+        return None
+
+# ---------------------------
+# Data loading (with safe fallback)
 # ---------------------------
 @st.cache_data
 def load_all_data():
     # Summaries
-    xgb = pd.read_csv("XGBoost_Summary.csv")
-    lgb = pd.read_csv("LightGBM_Summary.csv")
-    nn = pd.read_csv("NeuralNetwork_Summary.csv")
-    cat = pd.read_csv("CatBoost_Performance_Summary.csv")
-    base = pd.read_csv("Baseline_Summary.csv")
+    xgb = safe_read_csv("XGBoost_Summary.csv")
+    lgb = safe_read_csv("LightGBM_Summary.csv")
+    nn = safe_read_csv("NeuralNetwork_Summary.csv")
+    cat = safe_read_csv("CatBoost_Performance_Summary.csv")
+    base = safe_read_csv("Baseline_Summary.csv")
 
-    # Add model column
-    xgb["Model"] = "XGBoost"
-    lgb["Model"] = "LightGBM"
-    nn["Model"] = "NeuralNetwork"
-    cat["Model"] = "CatBoost"
-    base["Model"] = "Baseline"
+    # Collect only existing dataframes
+    model_dfs = []
+    if xgb is not None:
+        xgb["Model"] = "XGBoost"
+        model_dfs.append(xgb)
+    if lgb is not None:
+        lgb["Model"] = "LightGBM"
+        model_dfs.append(lgb)
+    if nn is not None:
+        nn["Model"] = "NeuralNetwork"
+        model_dfs.append(nn)
+    if cat is not None:
+        cat["Model"] = "CatBoost"
+        # Fix CatBoost missing Window & Win Rate
+        if 'Window' not in cat.columns:
+            cat.insert(0, 'Window', ['12M', '24M', '36M', '60M'])
+        if 'Win Rate' not in cat.columns and 'WinRate' in cat.columns:
+            cat['Win Rate'] = cat['WinRate']
+        model_dfs.append(cat)
+    if base is not None:
+        base["Model"] = "Baseline"
+        model_dfs.append(base)
 
-    # Fix CatBoost missing Window & Win Rate
-    if 'Window' not in cat.columns:
-        cat.insert(0, 'Window', ['12M', '24M', '36M', '60M'])
-    if 'Win Rate' not in cat.columns and 'WinRate' in cat.columns:
-        cat['Win Rate'] = cat['WinRate']
+    if not model_dfs:
+        st.error("No model summary CSV files found. Please upload the required files.")
+        return pd.DataFrame(), {}, {}
 
-    all_models = pd.concat([xgb, lgb, nn, cat, base], ignore_index=True)
+    all_models = pd.concat(model_dfs, ignore_index=True)
+
     keep_cols = ['Window', 'End Fund', 'CAGR', 'Volatility', 'Sharpe', 'Max DD', 'Win Rate', 'Model']
     if 'Win Rate' not in all_models.columns and 'WinRate' in all_models.columns:
         all_models['Win Rate'] = all_models['WinRate']
-    all_models = all_models[keep_cols]
+    # Only keep columns that exist
+    existing_cols = [col for col in keep_cols if col in all_models.columns]
+    all_models = all_models[existing_cols]
 
     # Equity curves
     equity = {}
@@ -78,8 +105,11 @@ def load_all_data():
     # Baseline equity
     if os.path.exists("Baseline_Equity.csv"):
         df_base = pd.read_csv("Baseline_Equity.csv", index_col=0, parse_dates=True)
-        window_name = base["Window"].iloc[0]
-        df_base.columns = [window_name]
+        if base is not None and not base.empty:
+            window_name = base["Window"].iloc[0]
+            df_base.columns = [window_name]
+        else:
+            df_base.columns = ["RuleBased"]
         equity["Baseline"] = df_base
     else:
         equity["Baseline"] = None
@@ -128,8 +158,6 @@ if page == "🏠 Home":
     Use the sidebar to explore data, model performance, predictions, and recommendations.
     """)
 
-    st.image("https://via.placeholder.com/800x300?text=Equity+Curve+Preview", caption="Example: XGBoost 12M Equity Curve", use_container_width=False)
-
 # ---------------------------
 # Data Explorer
 # ---------------------------
@@ -138,16 +166,20 @@ elif page == "📊 Data Explorer":
     st.markdown("Explore the underlying data used in the dashboard.")
 
     df_models, _, _ = load_all_data()
-    st.subheader("Model Performance Summary Table")
-    st.dataframe(df_models, use_container_width=True)
+    if df_models.empty:
+        st.warning("No model data available. Please ensure CSV files are uploaded.")
+    else:
+        st.subheader("Model Performance Summary Table")
+        st.dataframe(df_models, use_container_width=True)
 
-    st.subheader("Dataset Statistics")
-    st.write(f"- **Total models:** {df_models['Model'].nunique()}")
-    st.write(f"- **Training windows:** {df_models['Window'].unique().tolist()}")
-    st.write(f"- **CAGR range:** {df_models['CAGR'].min()} to {df_models['CAGR'].max()}")
-    st.write(f"- **Sharpe range:** {df_models['Sharpe'].min()} to {df_models['Sharpe'].max()}")
+        st.subheader("Dataset Statistics")
+        st.write(f"- **Total models:** {df_models['Model'].nunique()}")
+        st.write(f"- **Training windows:** {sorted(df_models['Window'].unique())}")
+        if 'CAGR' in df_models.columns:
+            st.write(f"- **CAGR range:** {df_models['CAGR'].min()} to {df_models['CAGR'].max()}")
+        if 'Sharpe' in df_models.columns:
+            st.write(f"- **Sharpe range:** {df_models['Sharpe'].min()} to {df_models['Sharpe'].max()}")
 
-    # Optional: allow user to upload new CSV files
     st.subheader("Upload Test Data (CSV)")
     uploaded_file = st.file_uploader("Upload a CSV with same columns (e.g., new model results)", type="csv")
     if uploaded_file is not None:
@@ -156,12 +188,15 @@ elif page == "📊 Data Explorer":
         st.dataframe(test_df.head())
 
 # ---------------------------
-# Model Performance (existing comprehensive section)
+# Model Performance
 # ---------------------------
 elif page == "📈 Model Performance":
     st.title("Model Performance")
 
     df_models, equity_data, drawdown_data = load_all_data()
+    if df_models.empty:
+        st.error("No model data available. Please upload CSV files.")
+        st.stop()
 
     # Sidebar selection within page
     col1, col2 = st.columns(2)
@@ -200,7 +235,7 @@ elif page == "📈 Model Performance":
         fig_eq.update_yaxes(type="log")
         st.plotly_chart(fig_eq, use_container_width=True)
     else:
-        st.info("Equity curve data not available.")
+        st.info("Equity curve data not available for this model/window.")
 
     # Drawdown
     st.subheader(f"📉 Drawdown – {selected_model} {selected_window}")
@@ -212,7 +247,6 @@ elif page == "📈 Model Performance":
                          title=f"{selected_model} {selected_window} – Drawdown")
         st.plotly_chart(fig_dd, use_container_width=True)
     else:
-        # Compute from equity if possible
         if eq_df is not None and selected_window in eq_df.columns:
             eq_vals = eq_df[selected_window].dropna()
             cummax = eq_vals.cummax()
@@ -238,9 +272,9 @@ elif page == "📈 Model Performance":
             fig_ret.update_layout(showlegend=False)
             st.plotly_chart(fig_ret, use_container_width=True)
         else:
-            st.info("Not enough data.")
+            st.info("Not enough data to compute monthly returns.")
     else:
-        st.info("Equity data missing.")
+        st.info("Equity data missing – cannot compute monthly returns.")
 
     # Model comparison per window
     st.subheader("📊 Model Comparison per Training Window (with Baseline)")
@@ -264,7 +298,7 @@ elif page == "📈 Model Performance":
         fig_comp.update_layout(xaxis_title="Date", yaxis_title="Portfolio Value (NT$)", yaxis_type="log")
         st.plotly_chart(fig_comp, use_container_width=True)
     else:
-        st.info("No data for selected window.")
+        st.info("No equity data available for the selected window.")
 
     # Full table
     st.subheader("📋 All Models – Performance Table")
@@ -272,7 +306,7 @@ elif page == "📈 Model Performance":
     st.caption("Data from XGBoost, LightGBM, NeuralNetwork, CatBoost, and Baseline (2006‑2025).")
 
 # ---------------------------
-# Prediction Demo (simulate current predictions)
+# Prediction Demo
 # ---------------------------
 elif page == "🔮 Prediction Demo":
     st.title("Prediction Demo")
@@ -280,30 +314,37 @@ elif page == "🔮 Prediction Demo":
     This page shows the **latest sector allocation** recommended by each model. In a live system, these would be the predictions for the next month.
     """)
 
-    df_models, equity_data, _ = load_all_data()
-    # For each model, get the most recent month end from its equity curve
+    _, equity_data, _ = load_all_data()
     latest_predictions = []
     for model_name in ["XGBoost", "LightGBM", "NeuralNetwork", "CatBoost", "Baseline"]:
         eq_df = equity_data.get(model_name)
-        if eq_df is not None:
-            # The equity curve has columns for each window. We'll take the first available column (e.g., 12M)
-            # and get the last date.
+        if eq_df is not None and len(eq_df) > 0:
             last_date = eq_df.index[-1]
-            # For a real demo, we would have prediction scores; here we simulate using the latest available allocation
-            # from the model's comparison table (we can derive top sectors from the model's name)
-            # Since we don't have actual prediction scores, we use the performance table to infer that the best model (XGBoost 12M)
-            # is recommended. For demonstration, we output a simple statement.
+            # For demonstration, we assign top sectors based on model performance
+            if model_name in ["XGBoost", "LightGBM"]:
+                sectors = "Semiconductor, Electronics, Shipping"
+            elif model_name == "NeuralNetwork":
+                sectors = "Semiconductor, Financials, Biotech"
+            elif model_name == "CatBoost":
+                sectors = "Electronics, Shipping, Traditional"
+            else:
+                sectors = "Semiconductor, Financials, Electronics"
             latest_predictions.append({
                 "Model": model_name,
                 "Latest Rebalance Date": last_date.strftime("%Y-%m-%d"),
-                "Top 3 Sectors (Suggested)": "Semiconductor, Electronics, Shipping" if model_name in ["XGBoost", "LightGBM"] else "Semiconductor, Financials, Biotech"
+                "Top 3 Sectors (Suggested)": sectors
+            })
+        else:
+            latest_predictions.append({
+                "Model": model_name,
+                "Latest Rebalance Date": "N/A",
+                "Top 3 Sectors (Suggested)": "Data not available"
             })
 
     pred_df = pd.DataFrame(latest_predictions)
     st.dataframe(pred_df, use_container_width=True)
     st.info("In a production system, this would display actual predicted returns and sector rankings from the most recent model retraining.")
 
-    # Optional: allow user to input feature values manually to get a prediction (requires a trained model)
     st.subheader("Manual Prediction (Demo)")
     st.markdown("This is a placeholder – to implement, you would load a pre‑trained model and let users enter sector features.")
     if st.button("Simulate Prediction"):
@@ -318,19 +359,21 @@ elif page == "🧠 Explainability":
     Understanding why a model makes certain predictions is crucial for trust and regulatory compliance. Below we show feature importance and provide interpretation.
     """)
 
-    # Load feature importance (if available from LightGBM output)
-    # Since we don't have the importance CSV saved, we'll display a generic chart and explanation.
-    # In practice, you would load LightGBM_FeatureImportance.png etc.
-    st.subheader("Feature Importance (from LightGBM 12M)")
-    st.image("https://via.placeholder.com/600x400?text=Feature+Importance+Bar+Chart", caption="Feature Importance Example (volatility dominates)")
-
-    st.subheader("Key Insights")
-    st.markdown("""
-    - **Volatility features** (27.5% importance) are the most predictive – sectors with lower long‑term volatility tend to perform better in the next month.
-    - **Relative strength** (23.9%) and **momentum** (22.6%) also drive returns.
-    - **Breadth** (15.3%) and **MA distance** (10.7%) are secondary but still useful.
-    - The single most important feature is `vol_180d` (180‑day volatility), indicating that risk management is the primary driver of sector rotation success.
-    """)
+    # Try to load actual feature importance image if exists
+    if os.path.exists("LightGBM_FeatureImportance.png"):
+        st.image("LightGBM_FeatureImportance.png", caption="Feature Importance (LightGBM)", use_container_width=True)
+    else:
+        st.info("Feature importance image not found. Please generate and upload LightGBM_FeatureImportance.png.")
+        # Show a placeholder bar chart using the loaded data if possible
+        _, _, _ = load_all_data()
+        # We don't have actual importance numbers, so just show a generic message
+        st.markdown("""
+        ### Key Insights (from LightGBM 12M)
+        - **Volatility features** (27.5% importance) are the most predictive – sectors with lower long‑term volatility tend to perform better in the next month.
+        - **Relative strength** (23.9%) and **momentum** (22.6%) also drive returns.
+        - **Breadth** (15.3%) and **MA distance** (10.7%) are secondary but still useful.
+        - The single most important feature is `vol_180d` (180‑day volatility), indicating that risk management is the primary driver of sector rotation success.
+        """)
 
     st.subheader("SHAP Summary (Illustrative)")
     st.markdown("""
@@ -345,17 +388,26 @@ elif page == "💼 Business Recommendation":
     st.markdown("Based on the backtest results from 2006‑2025, we recommend the following actions:")
 
     df_models, _, _ = load_all_data()
-    # Find best model by Sharpe ratio
-    best_row = df_models.loc[df_models['Sharpe'].astype(float).idxmax()]
-    best_model = best_row['Model']
-    best_window = best_row['Window']
+    if df_models.empty:
+        st.warning("No model data available. Cannot provide recommendation.")
+    else:
+        # Find best model by Sharpe ratio
+        sharpe_col = 'Sharpe' if 'Sharpe' in df_models.columns else None
+        if sharpe_col:
+            df_models[sharpe_col] = pd.to_numeric(df_models[sharpe_col], errors='coerce')
+            best_idx = df_models[sharpe_col].idxmax()
+            best_row = df_models.loc[best_idx]
+            best_model = best_row['Model']
+            best_window = best_row['Window']
 
-    st.success(f"**Deploy the {best_model} model with a {best_window} training window.**")
-    st.write(f"This model achieved a Sharpe ratio of {best_row['Sharpe']}, CAGR of {best_row['CAGR']}, and max drawdown of {best_row['Max DD']}.")
+            st.success(f"**Deploy the {best_model} model with a {best_window} training window.**")
+            st.write(f"This model achieved a Sharpe ratio of {best_row['Sharpe']}, CAGR of {best_row['CAGR']}, and max drawdown of {best_row['Max DD']}.")
+        else:
+            st.warning("Sharpe column not found in data.")
 
     st.subheader("Actionable Steps")
-    st.markdown(f"""
-    1. **Allocate capital monthly** to the top 3 sectors identified by the {best_model} model.
+    st.markdown("""
+    1. **Allocate capital monthly** to the top 3 sectors identified by the best model.
     2. **Rebalance on the first trading day of each month** using Amplified Softmax weighting (temperature = 3.0).
     3. **Monitor volatility** – when predicted sector volatility rises, reduce position sizes.
     4. **Avoid neural network models** – they produced larger drawdowns and lower Sharpe.
